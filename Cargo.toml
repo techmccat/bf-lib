@@ -5,6 +5,10 @@ authors = ["techmccat <alessioa02004@gmail.com>"]
 edition = "2018"
 description = "A library to run brainfuck code"
 license = "MIT"
+readme = README.md
+repository = "https://github.com/techmccat/bf-lib"
+keywords = ["brainfuck", "interpreter"]
+categories = ["command-line-utilities"]
 
 [lib]
 name = "bf_lib"
