@@ -2,7 +2,7 @@
 //!
 //! `bf-lib` is small library to run brainfuck programs non-interactively
 
-use std::{collections::HashMap, num::Wrapping};
+use std::{collections::HashMap, num::Wrapping, sync::mpsc, thread, time::Duration};
 ///Do a first pass on the program, adds every ['s position to a LIFO queue, pop from the vector and
 ///add to a hashmap every time a ] is found.
 fn maploops(bytes: &[u8]) -> Result<HashMap<usize, usize>, String> {
@@ -96,6 +96,77 @@ fn exec(bytes: &[u8], map: HashMap<usize, usize>, input: Option<String>) -> Resu
     Ok(output)
 }
 
+fn exec_timeout(
+    bytes: &[u8],
+    map: HashMap<usize, usize>,
+    input: Option<String>,
+    rx: mpsc::Receiver<()>,
+) -> Result<String, String> {
+    let mut mem = [Wrapping(0u8); 30000];
+    let (mut i, mut p, mut b) = (0usize, 0usize, 0usize);
+    let mut output = String::new();
+    let input = if let Some(a) = &input { a } else { "" };
+    while p < bytes.len() {
+        match bytes[p] {
+            b'>' => {
+                if i != 30000 {
+                    i += 1
+                } else {
+                    return Err(String::from(
+                        "Error, I didn't quite get that.\nOut of memory bounds",
+                    ));
+                }
+            }
+            b'<' => {
+                if i != 0 {
+                    i -= 1
+                } else {
+                    return Err(String::from(
+                        "Error, I didn't quite get that.\nOut of memory bounds",
+                    ));
+                }
+            }
+            b'+' => mem[i] += Wrapping(1),
+            b'-' => mem[i] -= Wrapping(1),
+            b'.' => {
+                output.push(mem[i].0 as char);
+            }
+            b',' => {
+                mem[i] = {
+                    b += 1;
+                    if let Some(char) = input.as_bytes().get(b - 1) {
+                        Wrapping(*char)
+                    } else {
+                        return Err(String::from(
+                            "Error, I didn't quite get that.\nInput too short.",
+                        ));
+                    }
+                }
+            }
+            b'[' => {
+                if mem[i].0 == 0 {
+                    p = map[&p]
+                }
+            }
+            b']' => {
+                if mem[i].0 != 0 {
+                    p = map[&p]
+                }
+            }
+            _ => (),
+        }
+        if let Ok(_) | Err(mpsc::TryRecvError::Disconnected) = rx.try_recv() {
+            return Err(String::from(
+                "Error, I didn't quite get that.
+Interpreter timed out",
+            ));
+        } else {
+            p += 1
+        }
+    }
+    Ok(output)
+}
+
 /// Runs a brainfuck program, returning the program's output or the reason it failed to execute.
 /// # Examples
 /// ```
@@ -108,6 +179,28 @@ pub fn run(program: &str, input: Option<String>) -> Result<String, String> {
     let bytes = program.as_bytes();
     let loops = maploops(bytes)?;
     let output = exec(bytes, loops, input)?;
+    Ok(output)
+}
+
+/// Like `run`, but stops the interpreter after a specified timeout.
+/// It runs slower though.
+pub fn run_timeout(
+    program: &str,
+    input: Option<String>,
+    time: i32,
+) -> Result<String, String> {
+    let bytes = program.as_bytes();
+    let loops = maploops(bytes)?;
+    let output = if time <= 0 {
+        exec(bytes, loops, input)?
+    } else {
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_secs(time as u64));
+            tx.send(())
+        });
+        exec_timeout(bytes, loops, input, rx)?
+    };
     Ok(output)
 }
 
