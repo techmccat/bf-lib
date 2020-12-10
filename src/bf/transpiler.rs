@@ -1,4 +1,4 @@
-use crate::{check_brackets, Error, RuntimeError, bf::*};
+use crate::{bf::*, check_brackets, Error, RuntimeError};
 use rand::{distributions::Alphanumeric, Rng};
 use std::{env, fs, path::PathBuf};
 use subprocess::{Exec, ExitStatus, Redirection};
@@ -120,20 +120,10 @@ let mut _o = String::new();\n";
     };
     for i in inst {
         match i {
-            Instruction::Move(x) => {
-                if x >= 0 {
-                    code.push_str(&format!("_p += {};\n", x))
-                } else {
-                    code.push_str(&format!("_p -= {};\n", x.abs()))
-                }
-            }
-            Instruction::Add(x) => {
-                if x >= 0 {
-                    code.push_str(&format!("_m[_p] += Wrapping({});\n", x))
-                } else {
-                    code.push_str(&format!("_m[_p] -= Wrapping({});\n", x.abs()))
-                }
-            }
+            Instruction::Right(x) => code.push_str(&format!("_p += {};\n", x)),
+            Instruction::Left(x) => code.push_str(&format!("_p -= {};\n", x)),
+            Instruction::Add(x) => code.push_str(&format!("_m[_p] += Wrapping({});\n", x)),
+            Instruction::Sub(x) => code.push_str(&format!("_m[_p] -= Wrapping({});\n", x)),
             Instruction::Print => code.push_str("_o.push(_m[_p].0 as char)\n;"),
             Instruction::Read => code.push_str(
                 "_m[_p] = { _b += 1; if let Some(c) = _i.as_bytes().get(_b-1) { Wrapping(*c)

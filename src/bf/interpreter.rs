@@ -1,5 +1,5 @@
 use std::{collections::HashMap, num::Wrapping, sync::mpsc, thread, time::Duration};
-use crate::{Error, RuntimeError};
+use crate::{Error, RuntimeError, bf::Instruction};
 
 pub fn run(program: &str, input: Option<String>, time: Option<Duration>) -> Result<String, Error> {
     let bytes = program.as_bytes();
@@ -19,7 +19,7 @@ pub fn run(program: &str, input: Option<String>, time: Option<Duration>) -> Resu
 
 ///Do a first pass on the program, adds every ['s position to a LIFO queue, pop from the
 ///vector and add to a hashmap every time a ] is found.
-pub fn maploops(bytes: &[u8]) -> Result<HashMap<usize, usize>, Error> {
+pub fn maploops (bytes: &[u8]) -> Result<HashMap<usize, usize>, Error> {
     let mut map = HashMap::new();
     let mut open: Vec<usize> = Vec::new();
     for (i, b) in bytes.iter().enumerate() {

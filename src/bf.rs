@@ -7,16 +7,18 @@ pub mod transpiler;
 
 #[derive(Debug)]
 pub enum Instruction {
-    Move(i32),
-    Add(i32),
+    Add(u32),
+    Sub(u32),
+    Left(u32),
+    Right(u32),
     Print,
     Read,
     LoopStart,
     LoopEnd,
-    //    Clear,
-    //    Copy(i32),
-    //    Mult(i32, i32),
-    //    Scan(bool),
+    //Clear,
+    //Copy(i32),
+    //Mult(i32, i32),
+    //Scan(bool),
 }
 
 enum Prev {
@@ -53,6 +55,24 @@ pub fn run(
 }
 
 fn firstpass(bytes: &[u8]) -> Result<Vec<Instruction>, Error> {
+    fn changed(prev: Prev, ac: i32, mc: i32) -> Instruction {
+        match prev {
+            Prev::Add => {
+                if ac >= 0 {
+                    Instruction::Add(ac as u32)
+                } else {
+                    Instruction::Sub(ac.abs() as u32)
+                }
+            }
+            Prev::Move => {
+                if mc >= 0 {
+                    Instruction::Right(mc as u32)
+                } else {
+                    Instruction::Left(mc.abs() as u32)
+                }
+            }
+        }
+    }
     let (mut ac, mut mc) = (0i32, 0i32);
     let mut prev = None;
     let mut inst: Vec<Instruction> = vec![];
@@ -62,8 +82,8 @@ fn firstpass(bytes: &[u8]) -> Result<Vec<Instruction>, Error> {
                 if let Some(Prev::Move) = prev {
                     mc += 1
                 } else {
-                    if let Some(Prev::Add) = prev {
-                        inst.push(Instruction::Add(ac))
+                    if let Some(p) = prev.take() {
+                        inst.push(changed(p, ac, mc))
                     }
                     ac = 0;
                     mc = 1;
@@ -74,8 +94,8 @@ fn firstpass(bytes: &[u8]) -> Result<Vec<Instruction>, Error> {
                 if let Some(Prev::Move) = prev {
                     mc -= 1
                 } else {
-                    if let Some(Prev::Add) = prev {
-                        inst.push(Instruction::Add(ac))
+                    if let Some(p) = prev.take() {
+                        inst.push(changed(p, ac, mc))
                     }
                     ac = 0;
                     mc = -1;
@@ -86,8 +106,8 @@ fn firstpass(bytes: &[u8]) -> Result<Vec<Instruction>, Error> {
                 if let Some(Prev::Add) = prev {
                     ac += 1
                 } else {
-                    if let Some(Prev::Move) = prev {
-                        inst.push(Instruction::Move(mc))
+                    if let Some(p) = prev.take() {
+                        inst.push(changed(p, ac, mc))
                     }
                     ac = 1;
                     mc = 0;
@@ -98,8 +118,8 @@ fn firstpass(bytes: &[u8]) -> Result<Vec<Instruction>, Error> {
                 if let Some(Prev::Add) = prev {
                     ac -= 1
                 } else {
-                    if let Some(Prev::Move) = prev {
-                        inst.push(Instruction::Move(mc))
+                    if let Some(p) = prev.take() {
+                        inst.push(changed(p, ac, mc))
                     }
                     ac = -1;
                     mc = 0;
@@ -107,56 +127,42 @@ fn firstpass(bytes: &[u8]) -> Result<Vec<Instruction>, Error> {
                 }
             }
             b'.' => {
-                match prev {
-                    Some(Prev::Add) => inst.push(Instruction::Add(ac)),
-                    Some(Prev::Move) => inst.push(Instruction::Move(mc)),
-                    None => (),
+                if let Some(p) = prev.take() {
+                    inst.push(changed(p, ac, mc))
                 }
                 ac = 0;
                 mc = 0;
-                prev = None;
                 inst.push(Instruction::Print);
             }
             b',' => {
-                match prev {
-                    Some(Prev::Add) => inst.push(Instruction::Add(ac)),
-                    Some(Prev::Move) => inst.push(Instruction::Move(mc)),
-                    None => (),
+                if let Some(p) = prev.take() {
+                    inst.push(changed(p, ac, mc))
                 }
                 ac = 0;
                 mc = 0;
-                prev = None;
                 inst.push(Instruction::Read);
             }
             b'[' => {
-                match prev {
-                    Some(Prev::Add) => inst.push(Instruction::Add(ac)),
-                    Some(Prev::Move) => inst.push(Instruction::Move(mc)),
-                    None => (),
+                if let Some(p) = prev.take() {
+                    inst.push(changed(p, ac, mc))
                 }
                 ac = 0;
                 mc = 0;
-                prev = None;
                 inst.push(Instruction::LoopStart);
             }
             b']' => {
-                match prev {
-                    Some(Prev::Add) => inst.push(Instruction::Add(ac)),
-                    Some(Prev::Move) => inst.push(Instruction::Move(mc)),
-                    None => (),
+                if let Some(p) = prev.take() {
+                    inst.push(changed(p, ac, mc))
                 }
                 ac = 0;
                 mc = 0;
-                prev = None;
                 inst.push(Instruction::LoopEnd);
             }
             _ => (),
         }
     }
-    match prev {
-        Some(Prev::Add) => inst.push(Instruction::Add(ac)),
-        Some(Prev::Move) => inst.push(Instruction::Move(mc)),
-        None => (),
+    if let Some(p) = prev.take() {
+        inst.push(changed(p, ac, mc))
     }
     Ok(inst)
 }
