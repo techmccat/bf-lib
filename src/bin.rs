@@ -1,4 +1,5 @@
 use std::{env, fs, io, process};
+use bf_lib::*;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -22,7 +23,7 @@ If a filename is not provided code is read from standard input
             .expect("Error. I didn't quite get that");
     }
 
-    let input = if bf_lib::wants_input(&prog) {
+    let input = if wants_input(&prog) {
         let mut input = String::new();
         eprintln!("Enter the input characters");
         io::stdin()
@@ -31,7 +32,7 @@ If a filename is not provided code is read from standard input
         Some(input.trim().to_owned())
     } else { None };
 
-    match bf_lib::run(&prog, input) {
+    match Exec::prog(&prog).input(input).run() {
         Ok(output)  => print!("{}", output),
         Err(err)    => { eprintln!("{}", err); process::exit(1) }
     }

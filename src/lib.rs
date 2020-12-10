@@ -1,212 +1,177 @@
 //! # bf-lib
 //!
 //! `bf-lib` is small library to run brainfuck programs non-interactively
+//!
+//! The entry point is the [`Exec`] struct, stole the idea from [`subprocess`]
+//!
+//! [`subprocess`]: https://crates.io/crates/subprocess
 
-use std::{collections::HashMap, num::Wrapping, sync::mpsc, thread, time::Duration};
-///Do a first pass on the program, adds every ['s position to a LIFO queue, pop from the vector and
-///add to a hashmap every time a ] is found.
-fn maploops(bytes: &[u8]) -> Result<HashMap<usize, usize>, String> {
-    let mut map = HashMap::new();
-    let mut open: Vec<usize> = Vec::new();
-    let mut i: usize = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'[' => open.push(i),
-            b']' => {
-                let last = if let Some(last) = open.pop() {
-                    last
-                } else {
-                    return Err(format!(
-                        "Error. I didn't quite get that.\nUnmatched bracket at {}",
-                        i
-                    ));
-                };
-                map.insert(last, i);
-                map.insert(i, last);
-            }
-            _ => (),
-        }
-        i += 1
-    }
-    if open.len() != 0 {
-        return Err(format!(
-            "Error. I didn't quite get that.\nUnmatched bracket at {}",
-            open.pop().unwrap()
-        ));
-    }
-    Ok(map)
+use std::{error, fmt, time, path::PathBuf};
+
+/// Possible errors encountered while running the program.
+#[derive(Debug)]
+pub enum Error {
+    Compile(String),
+    Runtime(RuntimeError),
+    Subprocess(subprocess::PopenError),
+    Syntax(usize),
+    Timeout,
 }
 
-fn exec(bytes: &[u8], map: HashMap<usize, usize>, input: Option<String>) -> Result<String, String> {
-    let mut mem = [Wrapping(0u8); 30000];
-    let (mut i, mut p, mut b) = (0usize, 0usize, 0usize);
-    let mut output = String::new();
-    let input = if let Some(a) = &input { a } else { "" };
-    while p < bytes.len() {
-        match bytes[p] {
-            b'>' => {
-                if i != 30000 {
-                    i += 1
-                } else {
-                    return Err(String::from(
-                        "Error, I didn't quite get that.\nOut of memory bounds",
-                    ));
-                }
-            }
-            b'<' => {
-                if i != 0 {
-                    i -= 1
-                } else {
-                    return Err(String::from(
-                        "Error, I didn't quite get that.\nOut of memory bounds",
-                    ));
-                }
-            }
-            b'+' => mem[i] += Wrapping(1),
-            b'-' => mem[i] -= Wrapping(1),
-            b'.' => {
-                output.push(mem[i].0 as char);
-            }
-            b',' => {
-                mem[i] = {
-                    b += 1;
-                    if let Some(char) = input.as_bytes().get(b - 1) {
-                        Wrapping(*char)
-                    } else {
-                        return Err(String::from(
-                            "Error, I didn't quite get that.\nInput too short.",
-                        ));
-                    }
-                }
-            }
-            b'[' => {
-                if mem[i].0 == 0 {
-                    p = map[&p]
-                }
-            }
-            b']' => {
-                if mem[i].0 != 0 {
-                    p = map[&p]
-                }
-            }
-            _ => (),
-        }
-        p += 1
-    }
-    Ok(output)
-}
+impl error::Error for Error {}
 
-fn exec_timeout(
-    bytes: &[u8],
-    map: HashMap<usize, usize>,
-    input: Option<String>,
-    rx: mpsc::Receiver<()>,
-) -> Result<String, String> {
-    let mut mem = [Wrapping(0u8); 30000];
-    let (mut i, mut p, mut b) = (0usize, 0usize, 0usize);
-    let mut output = String::new();
-    let input = if let Some(a) = &input { a } else { "" };
-    while p < bytes.len() {
-        match bytes[p] {
-            b'>' => {
-                if i != 30000 {
-                    i += 1
-                } else {
-                    return Err(String::from(
-                        "Error, I didn't quite get that.\nOut of memory bounds",
-                    ));
-                }
-            }
-            b'<' => {
-                if i != 0 {
-                    i -= 1
-                } else {
-                    return Err(String::from(
-                        "Error, I didn't quite get that.\nOut of memory bounds",
-                    ));
-                }
-            }
-            b'+' => mem[i] += Wrapping(1),
-            b'-' => mem[i] -= Wrapping(1),
-            b'.' => {
-                output.push(mem[i].0 as char);
-            }
-            b',' => {
-                mem[i] = {
-                    b += 1;
-                    if let Some(char) = input.as_bytes().get(b - 1) {
-                        Wrapping(*char)
-                    } else {
-                        return Err(String::from(
-                            "Error, I didn't quite get that.\nInput too short.",
-                        ));
-                    }
-                }
-            }
-            b'[' => {
-                if mem[i].0 == 0 {
-                    p = map[&p]
-                }
-            }
-            b']' => {
-                if mem[i].0 != 0 {
-                    p = map[&p]
-                }
-            }
-            _ => (),
-        }
-        if let Ok(_) | Err(mpsc::TryRecvError::Disconnected) = rx.try_recv() {
-            return Err(String::from(
-                "Error, I didn't quite get that.
-Interpreter timed out",
-            ));
-        } else {
-            p += 1
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let pre = "Error, I didn't quite get that.\n";
+        match self {
+            Error::Compile(s) => write!(f, "{}rustc error: {}", pre, s),
+            Error::Runtime(e) => write!(f, "{}Runtime error: {}", pre, e),
+            Error::Subprocess(e) => write!(f, "{}rustc error: {}", pre, e),
+            Error::Syntax(p) => write!(f, "{}Unmatched bracket at {}.", pre, p),
+            Error::Timeout => write!(f, "{}Executable timed out.", pre),
         }
     }
-    Ok(output)
 }
 
-/// Runs a brainfuck program, returning the program's output or the reason it failed to execute.
-/// # Examples
+/// Possible runtime errors encountered while running the program.
+#[derive(Debug, PartialEq)]
+pub enum RuntimeError {
+    OutOfMemoryBounds,
+    InputTooShort,
+    Signal,
+}
+
+impl fmt::Display for RuntimeError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            RuntimeError::OutOfMemoryBounds => write!(f, "access memory out of bounds"),
+            RuntimeError::InputTooShort => write!(f, "input was not long enough"),
+            RuntimeError::Signal => write!(f, "executable was probably killed by a signal"),
+        }
+    }
+}
+
+/// Interface for running brainfuck code.
+///
+/// The [`prog`] method returns an instance with the default options (no timeout, input or
+/// temporary file path)
+///
+/// [`input`], [`timeout`] and [`tmpdir`] are used to change the default values, the program can
+/// then be run by calling [`run`], [`transpile`] or [`interpret`].
+///
+/// [`prog`]: struct.Exec.html#method.prog
+/// [`input`]: struct.Exec.html#method.input
+/// [`timeout`]: struct.Exec.html#method.timeout
+/// [`tmpdir`]: struct.Exec.html#method.tmpdir
+/// [`run`]: struct.Exec.html#method.run
+/// [`transpile`]: struct.Exec.html#method.transpile
+/// [`interpret`]: struct.Exec.html#method.interpret
 /// ```
-/// let program = "++++++++++[>++++++++++>+++++++++++<<-]>++.>+..";
-/// let output = bf_lib::run(program, None).unwrap();
+/// # use bf_lib::Exec;
+/// let prog = "++++++++++[>++++++++++>+++++++++++<<-]>++.>+..";
+/// let output = Exec::prog(prog).run().unwrap();
 ///
 /// assert_eq!(String::from("foo"), output);
 /// ```
-pub fn run(program: &str, input: Option<String>) -> Result<String, String> {
-    let bytes = program.as_bytes();
-    let loops = maploops(bytes)?;
-    let output = exec(bytes, loops, input)?;
-    Ok(output)
+pub struct Exec {
+    program: String,
+    input: Option<String>,
+    time: Option<time::Duration>,
+    tmp_path: Option<PathBuf>,
 }
 
-/// Like `run`, but stops the interpreter after a specified timeout.
-/// It runs slower though.
-pub fn run_timeout(
-    program: &str,
-    input: Option<String>,
-    time: i32,
-) -> Result<String, String> {
-    let bytes = program.as_bytes();
-    let loops = maploops(bytes)?;
-    let output = if time <= 0 {
-        exec(bytes, loops, input)?
+impl Exec {
+    /// Contructs a new `Exec`, configured to run `prog`.
+    /// By default it will be run without input, timeout or temporary file path (defaults to cwd).
+    pub fn prog(prog: &str) -> Exec {
+        Exec {
+            program: String::from(prog),
+            input: None,
+            time: None,
+            tmp_path: None,
+        }
+    }
+
+    /// Sets the input for the program.
+    pub fn input(self, input: Option<String>) -> Exec {
+        Exec {
+            input,
+            ..self
+        }
+    }
+
+    /// Sets the timeout for the program.
+    pub fn timeout(self, time: Option<time::Duration>) -> Exec {
+        Exec {
+            time,
+            ..self
+        }
+    }
+
+    /// Sets the temporary file path for the transpiler.
+    pub fn tmpdir(self, tmp_path: Option<PathBuf>) -> Exec {
+        Exec {
+            tmp_path,
+            ..self
+        }
+    }
+    
+    /// Wrapper for the [`transpile`] and [`interpret`] methods:
+    /// uses the faster transpiler when rustc is detected, falls back to interpreting the code.
+    ///
+    /// [`transpile`]: struct.Exec.html#method.interpret
+    /// [`interpret`]: struct.Exec.html#method.transpile
+    pub fn run(self) -> Result<String, Error> {
+        bf::run(&self.program, self.input, self.time, self.tmp_path)
+    }
+    
+    /// Runs the program with the interpreter, returning the output or an [`Error`].
+    pub fn interpret(self) -> Result<String, Error> {
+        bf::interpreter::run(&self.program, self.input, self.time)
+    }
+    
+    /// Runs the program with the transpiler, returning the output or an [`Error`].
+    ///
+    /// Needs read and write permission in the chosen temporary file folder.
+    pub fn transpile(self) -> Result<String, Error> {
+        bf::transpiler::run(&self.program, self.input, self.time, self.tmp_path)
+    }
+
+    /// Translated the program to rust code
+    pub fn translate(&self) -> Result<String, Error> {
+        bf::transpiler::translate(&self.program, self.input.clone())
+    }
+}
+
+/// Looks for unmatched brackets
+///
+/// ```
+/// let ok = "+[+]";
+/// let err = "[[]";
+/// bf_lib::check_brackets(ok).unwrap();
+/// bf_lib::check_brackets(err).unwrap_err();
+/// ```
+pub fn check_brackets(prog: &str) -> Result<(), Error> {
+    let mut open: Vec<usize> = Vec::new();
+    for (i, b) in prog.as_bytes().iter().enumerate() {
+        match b {
+            b'[' => open.push(i),
+            b']' => {
+                if let None = open.pop() {
+                    return Err(Error::Syntax(i));
+                };
+            }
+            _ => (),
+        }
+    }
+    if open.len() != 0 {
+        Err(Error::Syntax(open.pop().unwrap()))
     } else {
-        let (tx, rx) = mpsc::channel();
-        thread::spawn(move || {
-            thread::sleep(Duration::from_secs(time as u64));
-            tx.send(())
-        });
-        exec_timeout(bytes, loops, input, rx)?
-    };
-    Ok(output)
+        Ok(())
+    }
 }
 
 /// Checks if the program will try to read user input.
-///
-/// # Examples
 ///
 /// ```
 /// let reads = ",[>+>+<<-]>.>.";
@@ -219,40 +184,7 @@ pub fn wants_input(program: &str) -> bool {
     program.contains(",")
 }
 
+mod bf;
+
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn in_out() {
-        assert_eq!(
-            run(",.", Some(String::from("a"))).unwrap(),
-            String::from("a")
-        );
-    }
-
-    #[test]
-    fn loop_math() {
-        assert_eq!(
-            run("+++++[>++++++++++<-]>-.", None).unwrap(),
-            String::from("1")
-        );
-    }
-
-    #[test]
-    #[should_panic]
-    fn out_of_memory() {
-        run("<", None).unwrap();
-    }
-
-    #[test]
-    #[should_panic]
-    fn out_of_input() {
-        run(",", None).unwrap();
-    }
-    #[test]
-    fn input_check() {
-        assert_eq!(wants_input("foo , bar"), true);
-        assert_eq!(wants_input("foo . bar"), false);
-    }
-}
+mod tests;

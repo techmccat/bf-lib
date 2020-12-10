@@ -1,13 +1,13 @@
 [package]
 name = "bf-lib"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["techmccat <alessioa02004@gmail.com>"]
 edition = "2018"
 description = "A library to run brainfuck code"
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/techmccat/bf-lib"
-keywords = ["brainfuck", "interpreter"]
+keywords = ["brainfuck", "interpreter", "compiler"]
 categories = ["command-line-utilities"]
 
 [lib]
@@ -17,3 +17,7 @@ path = "src/lib.rs"
 [[bin]]
 name = "bf-bin"
 path = "src/bin.rs"
+
+[dependencies]
+subprocess = "0.2.6"
+rand = "0.7"
