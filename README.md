@@ -8,4 +8,3 @@ An example binary is included
 
 - ~~Stop infinite loops~~ Not detectable, have a timeout.
 - Return error if the input isn't long enough while doing the first pass, not at runtime
-- Feed data from the first pass to the interpreter
